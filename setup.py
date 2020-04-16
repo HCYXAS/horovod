@@ -37,12 +37,10 @@ from setuptools.command.build_ext import build_ext
 from horovod import __version__
 from horovod.common.util import env
 
-
 class CMakeExtension(Extension):
     def __init__(self, name, cmake_lists_dir='.', sources=[], **kwa):
         Extension.__init__(self, name, sources=sources, **kwa)
         self.cmake_lists_dir = os.path.abspath(cmake_lists_dir)
-
 
 tensorflow_mpi_lib = Extension('horovod.tensorflow.mpi_lib', [])
 torch_mpi_lib = Extension('horovod.torch.mpi_lib', [])
@@ -365,8 +363,8 @@ def test_compile(build_ext, name, code, libraries=None, include_dirs=None,
     source_file = os.path.join(test_compile_dir, '%s.cc' % name)
     with open(source_file, 'w') as f:
         f.write(code)
-
     compiler = build_ext.compiler
+    
     [object_file] = compiler.object_filenames([source_file])
     shared_object_file = compiler.shared_object_filename(
         name, output_dir=test_compile_dir)
@@ -580,7 +578,6 @@ def set_cuda_options(build_ext, COMPILE_FLAGS, MACROS, INCLUDES, SOURCES, BUILD_
 def get_common_options(build_ext):
     cpp_flags = get_cpp_flags(build_ext)
     link_flags = get_link_flags(build_ext)
-
     is_mac = os.uname()[0] == 'Darwin'
     compile_without_gloo = os.environ.get('HOROVOD_WITHOUT_GLOO')
     if compile_without_gloo:
@@ -1167,11 +1164,12 @@ def is_torch_cuda():
 def is_torch_cuda_v2(build_ext, include_dirs, extra_compile_args):
     try:
         from torch.utils.cpp_extension import include_paths
+        
         test_compile(build_ext, 'test_torch_cuda',
                      include_dirs=include_dirs + include_paths(cuda=True),
                      extra_compile_preargs=extra_compile_args,
                      code=textwrap.dedent('''\
-            #include <THC/THC.h>
+            #include <THH/THH.h>
             void test() {
             }
             '''))
@@ -1264,12 +1262,12 @@ def build_torch_extension(build_ext, global_options, torch_version):
             source_extension='.cc',
             define_macros=updated_macros,
             include_dirs=options['INCLUDES'],
-            sources=options['SOURCES'] + ['horovod/torch/mpi_ops.cc',
-                                          'horovod/torch/handle_manager.cc',
-                                          'horovod/torch/ready_event.cc',
-                                          'horovod/torch/tensor_util.cc',
-                                          'horovod/torch/cuda_util.cc',
-                                          'horovod/torch/adapter.cc'],
+            sources=options['SOURCES'] + ['horovod/torch_hip/mpi_ops.cc',
+                                          'horovod/torch_hip/handle_manager.cc',
+                                          'horovod/torch_hip/ready_event_hip.cc',
+                                          'horovod/torch_hip/tensor_util.cc',
+                                          'horovod/torch_hip/hip_util.cc',
+                                          'horovod/torch_hip/adapter.cc'],
             extra_compile_args=options['COMPILE_FLAGS'],
             extra_link_args=options['LINK_FLAGS'],
             library_dirs=options['LIBRARY_DIRS'],
@@ -1295,9 +1293,9 @@ def build_torch_extension_v2(build_ext, global_options, torch_version):
     compile_flags = options['COMPILE_FLAGS']
     if LooseVersion(torch.__version__) >= LooseVersion('1.3.0'):
         compile_flags = set_flag(compile_flags, 'std', 'c++14')
-
-    have_cuda = is_torch_cuda_v2(build_ext, include_dirs=options['INCLUDES'],
-                                 extra_compile_args=compile_flags)
+ #   have_cuda = is_torch_cuda_v2(build_ext, include_dirs=options['INCLUDES'],
+ #                                extra_compile_args=compile_flags)
+    have_cuda = True
     have_cuda_macro = check_macro(options['MACROS'], 'HAVE_CUDA')
     if not have_cuda and have_cuda_macro:
         raise DistutilsPlatformError(
@@ -1307,8 +1305,8 @@ def build_torch_extension_v2(build_ext, global_options, torch_version):
     # Update HAVE_CUDA to mean that PyTorch supports CUDA. Internally, we will be checking
     # HOROVOD_GPU_(ALLREDUCE|ALLGATHER|BROADCAST) to decide whether we should use GPU
     # version or transfer tensors to CPU memory for those operations.
-    if have_cuda and not have_cuda_macro:
-        set_cuda_options(build_ext, **options)
+#    if have_cuda and not have_cuda_macro:
+#        set_cuda_options(build_ext, **options)
 
     # Export TORCH_VERSION equal to our representation of torch.__version__. Internally it's
     # used for backwards compatibility checks.
@@ -1330,16 +1328,15 @@ def build_torch_extension_v2(build_ext, global_options, torch_version):
     else:
         # CUDAExtension fails with `ld: library not found for -lcudart` if CUDA is not present
         from torch.utils.cpp_extension import CppExtension as TorchExtension
-
     ext = TorchExtension(torch_mpi_lib_v2.name,
                          define_macros=updated_macros,
                          include_dirs=options['INCLUDES'],
                          sources=options['SOURCES'] + [
-                            'horovod/torch/mpi_ops_v2.cc',
-                            'horovod/torch/handle_manager.cc',
-                            'horovod/torch/ready_event.cc',
-                            'horovod/torch/cuda_util.cc',
-                            'horovod/torch/adapter_v2.cc'],
+                            'horovod/torch_hip/mpi_ops_v2.cc',
+                            'horovod/torch_hip/handle_manager.cc',
+                            'horovod/torch_hip/ready_event_hip.cc',
+                            'horovod/torch_hip/hip_util.cc',
+                            'horovod/torch_hip/adapter_v2.cc'],
                          extra_compile_args=compile_flags,
                          extra_link_args=options['LINK_FLAGS'],
                          library_dirs=options['LIBRARY_DIRS'],
@@ -1476,7 +1473,9 @@ class custom_build_ext(build_ext):
         if not os.environ.get('HOROVOD_WITHOUT_PYTORCH'):
             try:
                 torch_version = check_torch_version()
+                print("torch version: \n",torch_version)
                 if torch_version >= 1000000000:
+                    
                     build_torch_extension_v2(self, options, torch_version)
                 else:
                     build_torch_extension(self, options, torch_version)
